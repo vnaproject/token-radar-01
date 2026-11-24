@@ -1,11 +1,13 @@
-// Token Radar entry (Node 22, standard library only) -- model "radar-2".
+// Token Radar entry (Node 22, standard library only) -- model "radar-3".
 //
 // Reads the sealed snapshot (default /input/snapshot.json, or --input
-// <snapshot.json|directory>), scores every pre-token protocol with the
-// model in lib/model.ts, writes the ranked board to /output/board.json,
-// writes the dashboard's data as /output/data.js, copies dashboard/ and
-// screenshots/ into /output, and writes /output/dossier.json with the
-// vendored make.fun library so the scorer can rebuild it byte for byte.
+// <snapshot.json|directory>), fits radar-3's calibration from the
+// snapshot's own live-token protocols, scores every board-eligible
+// pre-token protocol with the model in lib/model.ts, writes the ranked
+// board to /output/board.json, writes the dashboard's data as
+// /output/data.js, copies dashboard/ and screenshots/ into /output, and
+// writes /output/dossier.json with the vendored make.fun library so the
+// scorer can rebuild it byte for byte.
 //
 // Local run:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../kit/token-radar-01-kit/input/snapshot.json
@@ -87,5 +89,6 @@ writeFileSync(
 
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside)\n` +
+    `token radar: radar-3 calibration from ${radar.calibration.sample_size} live protocols: median mcap/TVL ${radar.calibration.median_ratio.toFixed(3)}, fitted log-log slope ${radar.calibration.fitted_slope.toFixed(2)}, top implied $${board[0]!.implied_value_usd.toLocaleString('en-US')}\n` +
     `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (${dashFiles.length} files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );

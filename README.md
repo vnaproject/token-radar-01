@@ -1,4 +1,4 @@
-# Token Radar — pre-token protocols ranked by implied value
+# Token Radar — pre-token protocols ranked by implied value (model radar-3)
 
 A token launch radar built from one sealed DefiLlama snapshot. It answers,
 for every protocol in the snapshot: what would its token be worth if the
@@ -8,85 +8,128 @@ issued. Implied value is this entry's own claim, never make.fun's.
 
 ## What it is
 
-- **Board:** 200 pre-token protocols, ranked by implied value. All 40
-  protocols on the snapshot's watchlist are in, plus the 160 highest-TVL
-  rankable pre-token protocols below the $50,000,000 floor.
-- **Pre-token** means the protocol's DefiLlama record carries no token:
-  `mcap_usd`, `gecko_id` and `symbol` are all null. The snapshot carries no
-  audit, mint or contract field, so this board claims none of those.
-- **Live token view:** 24 protocols whose token already trades, by market
-  cap. They are set aside from the ranking; their market cap is a fact,
-  not a model.
-- **Dashboard:** a static offline page (`dashboard/`) with search, chain
-  and category filters, pre-token / live tabs, sortable columns, a detail
-  view per protocol (model breakdown + farm plan), and the model stated
-  in full. No network, no CDN, no external font.
+- **The board:** 233 pre-token protocols, ranked by implied value — every one
+  of the 40 watchlist slugs, plus every rankable pre-token protocol in the
+  snapshot. Rank 1 is Steakhouse Financial at $128.9M implied; the median row
+  is $5.1M. Ranks run 1..233 and implied values never rise down the board.
+- **The model (radar-3):** the base multiple is fitted from the snapshot's
+  own live-token protocols, not asserted. See "The model" below.
+- **The live set:** the 24 largest live-token protocols, set aside as a
+  control — they are what the model is fitted on, and they are never ranked.
+- **Farm plans:** 6 steps per row, with a cost and a time on each, varied by
+  the protocol's own category, chains, growth and age — plus a per-protocol
+  "why farm this one" line and a risk note where the record warrants one.
+- **The dashboard:** `dashboard/` is a single static page (no network, no
+  framework). It filters by chain, category, watchlist-only and minimum
+  implied value, sorts on every column, and opens a detail view per protocol
+  with the full model breakdown, a recompute check, the farm plan and the
+  risk note. A "How the ranking works" section states the model and its
+  calibration in full.
 
-## How to run it
+## The model
 
-```sh
-mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input <path to snapshot.json>
-```
-
-Node 22.18 or later, standard library only, nothing to install. The
-program reads the snapshot, writes `out/board.json` (the ranked board),
-`out/data.js` (the dashboard's data), copies `dashboard/` and
-`screenshots/` into `out/`, and writes `out/dossier.json`. Open
-`out/dashboard/index.html` in a browser, or serve the folder with
-`python3 -m http.server` from inside `out/dashboard` (with `data.js`
-one level up, as the program writes it).
-
-## The model — radar-2
-
-Every row is scored by one function of the snapshot figures. No protocol
-name is special-cased and no row is hand-picked.
+Implied value is computed from the snapshot's own figures only — TVL,
+7-day change, age with no token recorded, and chain breadth. No protocol
+name is ever special-cased; a protocol is described as recording no token,
+never as having none.
 
 ```
-growth     = clamp(change_7d, -40, 150) per cent; missing change counts as 0
-growthMult = 1 + (growth / 100) x 0.65
-maturity   = 0.55 + 0.45 x sqrt(min(age_days, 1460) / 1460)
-             age unknown: 180 days
-stability  = 0.95 when change_7d is unreported, else 1.00
-implied    = max(1, round(tvl_usd x 0.28 x growthMult x maturity x stability))
+implied = TVL × K × TVL^(β−1) × category × (1 + clamp(7d, −30, +100) / 100 × 0.35)
+          × (0.75 + 0.25 × √(min(age, 730) / 730)) × (1 + 0.02 × min(chains − 1, 4))
+          × stability
 ```
 
-`age_days` is the time from `listed_at` to the snapshot's `as_of` date.
-Why this shape: growth is weighted 0.65 and clamped tighter below (-40)
-and looser above (+150), because fast growth just before launch is the
-signal and a steep seven-day fall should bite. Maturity is a square-root
-curve, so the first two tokenless years count most and later years add
-less. An unreported seven-day change costs 5%, and an unknown listing
-date is credited 180 days, not a full year — we do not hand out maturity
-credit for a date we never saw.
+Calibration, computed at run time from the same snapshot (deterministic —
+run it twice and the outputs are byte-identical):
 
-## What is filtered out, and why
+- **Live sample:** 128 protocols with a recorded market cap above zero.
+- **Median mcap/TVL:** 0.214, at a median live TVL of $32.6M. The base
+  multiple K = 91.1 is the constant that reproduces that median at that TVL.
+- **Fitted log-log slope:** log(mcap) on log(TVL) is 0.52 (r = 0.44) — the
+  ratio falls steeply as TVL grows ($5–50M: 0.307; $50–100M: 0.149;
+  $100–500M: 0.082; $500M–1B: 0.034; $1–5B: 0.029). The model uses
+  β = 0.65, a conservative dampening between linear and the fitted slope,
+  so mega-TVL does not dominate.
+- **Growth, age and chains barely predict the ratio** among live protocols:
+  correlations of log(mcap/TVL) are −0.15 with 7-day change, −0.02 with
+  log(age) and −0.04 with chain count. So growth enters clamped and with
+  weight 0.35, maturity rises only from 0.75 to 1.00 over 730 days, and each
+  extra chain adds 2% up to 8%.
+- **Category factors** (shrunken toward 1.00 with k = 8, applied only where
+  at least 5 live protocols exist in the category): Dexs 1.35 (n=11),
+  Basis Trading 1.96 (n=7), Bridge 1.69 (n=6), RWA 1.15 (n=9),
+  Yield 0.94 (n=9), Lending 0.75 (n=15), Liquid Staking 0.57 (n=9),
+  Canonical Bridge 2.00 (n=8), CEX 0.66 (n=9). Every other category uses
+  1.00 — including Risk Curators and Onchain Capital Allocator, which have
+  almost no live-token sample, so the top of the board is driven by TVL
+  and breadth, not by a category guess.
+- **Stability:** a protocol that records no 7-day change is discounted 5%
+  for the missing signal; unknown age is taken as 180 days.
 
-- Protocols that record a token (`mcap_usd`, `gecko_id` or `symbol` set)
-  are not ranked: their token already exists, so an implied launch value
-  does not apply. The top 24 by market cap are shown separately.
-- `CEX` protocols are not ranked: an exchange's balance sheet is not a
-  protocol waiting on a launch.
-- Names ending in a version marker (`V2`, `v2`, `2.0` and the like) are
-  not ranked: they are a pool of another protocol, not a launch of
-  their own.
-- Wrapped, staked and bridged products of tokens that already trade are
-  off the watchlist by the snapshot's own rule, and the early radar only
-  adds protocols below the floor that pass the same rankable test.
+## The board rule
+
+Rankable means pre-token, not a CEX, and not a versioned pool name
+(a slug ending in a version like `-v3`, or containing ` v` + a number).
+The board ranks all 40 watchlist slugs unconditionally, plus every
+board-eligible pre-token protocol. Board-eligible excludes wrapped,
+staked and exchange-branded products, and — above the $50M floor — the
+bridge and liquid-staking categories, because a $7B wrapped token is not
+a launch waiting to happen. Below the floor every rankable protocol
+stays, so the early board finds launches. That gives 233 rows from 289
+rankable protocols (193 early rows + 40 watchlist).
 
 ## Farm plans
 
-Each row carries six steps, derived from that protocol's own record:
-category picks the action (supply for Lending, liquidity for Dexs,
-bridge for Bridge, stake for Staking, margin for Perps, and so on),
-the first chain picks the gas cost (Ethereum about $8 a transaction,
-Solana about $0.20, L2s about $0.60), TVL picks the capital
-($50 / $100 / $150 / $250), and age picks the hold (21–60 days).
-Every step states its cost and its time.
+Each row carries 6 steps, each 20–600 characters, with a cost and a time.
+The steps vary by the protocol's own record:
 
-## Data source
+- The **size** follows TVL ($50 on the smallest, up to $250 on the
+  largest), the **gas** follows the chain it is on, the **hold** follows
+  age (21 days for a young protocol, 60 for a mature one).
+- The **weekly step** is growth-aware: +20% or more in 7 days means start
+  this week because the window may be short; −20% or worse means start
+  with half the capital and add only if it steadies.
+- **Multichain** protocols get a second-chain step; **Dexs** get a swap
+  step, **Lending** a borrow step, **Yield** a vault step, **Risk
+  Curators** a vault step, and anything else a deposit step.
+- The **why-farm line** states the protocol's rank, TVL, chain count,
+  7-day change and age in one sentence.
+- A **risk note** appears when the record warrants it: a fall of 20% or
+  more in 7 days (size the position small), no 7-day change reported, or
+  listed less than 90 days ago.
 
-DefiLlama protocol index, sealed snapshot `snapshot.json`, `as_of`
-2026-11-14, fetched 2026-11-14T01:18:33Z from the DefiLlama protocols
-endpoint. The snapshot holds 758 protocols at or above $5,000,000 TVL;
-the watchlist holds 40 of them at or above the $50,000,000 floor with
-no token on record. The snapshot is read as-is and never modified.
+## How to run it
+
+Requires Node 22 or later, standard library only, no network.
+
+```sh
+mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input <snapshot.json|directory>
+```
+
+It writes `board.json`, `data.js`, `dashboard/` (copied), `screenshots/`
+(copied) and `dossier.json` into the output directory. Run it twice and
+the outputs are byte-identical. The grader instead mounts the snapshot at
+`/input` and takes `/output`.
+
+## Files
+
+- `main.ts` — entrypoint: reads the snapshot, scores it, writes the
+  outputs and the dossier.
+- `lib/model.ts` — the radar-3 model: calibration, implied value,
+  board rule, farm plans, live set, and the dashboard data.
+- `dashboard/` — `index.html`, `app.css`, `app.js`: the static page.
+  Total source 31.5 KB.
+- `screenshots/` — board, detail view, filtered view (1440×900 PNGs).
+- `vendor/makefun-board.ts` — the vendored make.fun library that builds
+  the dossier; do not modify it.
+- `input/` — not in this repo; the snapshot is mounted by the grader.
+
+## Limits
+
+- The snapshot is frozen at 2026-11-14; nothing here updates it.
+- Implied value is a fitted claim, not a price: it says what a token
+  would be worth if the protocol's record stayed as it is, and the live
+  sample it is fitted on is only 128 protocols with a wide spread
+  (mcap/TVL from 0.032 at the 25th percentile to 1.00 at the 75th).
+- The board says nothing about whether or when a token is issued, and
+  the farm plans are research, not financial advice.
