@@ -1,8 +1,9 @@
-// Token Radar entry (Node 22, standard library only) -- model "radar-3".
+// Token Radar entry (Node 22, standard library only) -- model "radar-4".
 //
 // Reads the sealed snapshot (default /input/snapshot.json, or --input
-// <snapshot.json|directory>), fits radar-3's calibration from the
-// snapshot's own live-token protocols, scores every board-eligible
+// <snapshot.json|directory>), fits radar-4's calibration from the
+// snapshot's own live-token protocols and tests every term of the recipe
+// held-out (two folds) before it uses it, scores every board-eligible
 // pre-token protocol with the model in lib/model.ts, writes the ranked
 // board to /output/board.json, writes the dashboard's data as
 // /output/data.js, copies dashboard/ and screenshots/ into /output, and
@@ -89,6 +90,7 @@ writeFileSync(
 
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside)\n` +
-    `token radar: radar-3 calibration from ${radar.calibration.sample_size} live protocols: median mcap/TVL ${radar.calibration.median_ratio.toFixed(3)}, fitted log-log slope ${radar.calibration.fitted_slope.toFixed(2)}, top implied $${board[0]!.implied_value_usd.toLocaleString('en-US')}\n` +
+    `token radar: radar-4 calibration from ${radar.calibration.sample_size} live protocols: median mcap/TVL ${radar.calibration.median_ratio.toFixed(3)}, fitted log-log slope ${radar.calibration.fitted_slope.toFixed(2)}, held-out beta ${radar.calibration.active.beta.toFixed(2)}, held-out log RMSE ${radar.calibration.validation.final_rmse.toFixed(3)}, top implied $${board[0]!.implied_value_usd.toLocaleString('en-US')}\n` +
+    `token radar: held-out terms kept: ${radar.calibration.validation.terms.filter((t) => t.kept).map((t) => t.term).join(', ') || 'none'}; dropped: ${radar.calibration.validation.terms.filter((t) => !t.kept).map((t) => t.term).join(', ') || 'none'}\n` +
     `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (${dashFiles.length} files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );

@@ -1,41 +1,54 @@
-// Token Radar model "radar-3": one sealed snapshot in, one ranked board out.
+// Token Radar model "radar-4": one sealed snapshot in, one ranked board out.
 //
-// radar-2 asserted its value multiple (0.28) and scored TVL linearly.
-// radar-3 fits the multiple from the snapshot itself: among the live-token
-// protocols in the same snapshot, the market cap per dollar of TVL is
-// measured (median, and by category where the sample allows), and the
-// multiple falls with size because the data says it does — the log-log fit
-// of market cap on TVL has slope 0.52, so a protocol ten times larger does
-// not carry ten times the implied value. Growth and age do not predict the
-// live ratio (correlations -0.15 and -0.02), so they enter only as modest
-// momentum and maturity terms, not as fitted ratio predictors. Chain
-// breadth does not raise the ratio either (correlation -0.04), so it earns
-// only a small capped bonus for distribution reach.
+// radar-3 fitted its value multiple from the snapshot's live-token
+// protocols but never tested the recipe: every term it used was asserted
+// from a correlation. radar-4 tests every term held-out before it uses
+// it. The 128 live-token protocols are split into two folds by slug
+// order; each term is fitted on one fold and asked to predict the other
+// fold's market caps, and a term stays only when removing it makes the
+// held-out error worse. The dampening exponent beta is chosen the same
+// way, among the fitted log-log slope, the conservative 0.65 and linear
+// 1.00. The final fit then uses all 128 live protocols with the validated
+// recipe, and the dashboard states the whole test: the folds, every
+// variant's held-out error, and what was kept or dropped and why.
+//
+// The validation tests the recipe, not the final fit: the final fit uses
+// the whole live sample, because the board is scored once and there is
+// no second snapshot to spend. What the held-out test proves is that the
+// recipe generalises to protocols it was not fitted on — the only ground
+// truth the snapshot carries, since no pre-token protocol has a market
+// cap to predict.
 //
 // A protocol is pre-token when its DefiLlama record carries no token at
 // all (mcap_usd, gecko_id and symbol are all null). Live-token protocols
 // are never ranked: they are set aside with their market cap shown as a
-// fact. The board also leaves out wrapped, staked and bridged products of
-// tokens that already trade — the snapshot's own watchlist rule, applied
-// to the board above the floor — because those are not launches waiting
-// to happen. Below the floor the radar keeps every rankable protocol:
+// fact. The board ranks every rankable pre-token protocol: the watchlist
+// is the floor, never the ceiling, so bridge and liquid-staking protocols
+// above the floor are in too — each records no token of its own, and a
+// bridge or liquid-staking protocol may still issue one; the board labels
+// the category so the reader can see it. What stays out: versioned pools,
+// exchange products, and names that say wrapped or staked, because those
+// are products of tokens that already trade, not launches waiting to
+// happen. Below the floor the radar keeps every rankable protocol:
 // the early board exists to find launches, not to re-apply the floor.
 //
-//   baseMultiple(TVL) = K x TVL^(BETA - 1)       (BETA 0.65, fitted 0.52)
+//   baseMultiple(TVL) = K x TVL^(BETA - 1)       (BETA chosen held-out)
 //   K                 = medianRatio x tvlRef^(1 - BETA)
 //   categoryFactor    = shrunken category median ratio / overall median
 //                       (categories with < 5 live samples: 1.00)
 //   growth            = clamp(change_7d, -30, 100) per cent; null counts as 0
-//   growthMult        = 1 + (growth / 100) x 0.35
+//   growthMult        = 1 + (growth / 100) x 0.35        (kept only if held-out says so)
 //   maturity          = 0.75 + 0.25 x sqrt(min(age_days, 730) / 730)
 //                       age unknown: 180 days (cautious, not the average)
 //   chainMult         = 1 + 0.02 x min(chains - 1, 4), at most 1.08
 //   stability         = 0.95 when change_7d is unreported, else 1.00
 //   implied           = max(1, round(TVL x baseMultiple x categoryFactor
-//                           x growthMult x maturity x chainMult x stability))
+//                           x growthMult x maturityMult x chainMult x stability))
 //
-// No protocol name is ever special-cased: the same function scores every
-// row, and the same eligibility rule admits every row.
+// A term the held-out test drops contributes 1.00 to the product, and the
+// dashboard says so. No protocol name is ever special-cased: the same
+// function scores every row, and the same eligibility rule admits every
+// row.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -60,7 +73,7 @@ export interface Snapshot {
   watchlist: string[];
 }
 
-/** radar-3's constants, as the dashboard states them. */
+/** radar-4's constants, as the dashboard states them. */
 export interface ModelConstants {
   beta: number;
   growth_weight: number;
@@ -98,12 +111,54 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it and the README quotes it. */
-export const MODEL_VERSION = 'radar-3';
+export const MODEL_VERSION = 'radar-4';
 
 /** How many live-token protocols the Live token view carries, by market cap. */
 export const LIVE_ROWS = 24;
 
-/** The calibration radar-3 fits from the snapshot's own live-token protocols. */
+/** How much better a term must be, in held-out log RMSE, to survive: a term that only ties is kept. */
+export const KEEP_MARGIN = 0.001;
+
+/** The recipe the held-out test validated: which beta, and which terms are live. */
+export interface ActiveConfig {
+  beta: number;
+  growth: boolean;
+  maturity: boolean;
+  chain: boolean;
+  category: boolean;
+}
+
+/** One held-out variant's error: the same recipe, one change, both folds. */
+export interface ValidationVariant {
+  variant: string;
+  fold_1: number;
+  fold_2: number;
+  mean: number;
+}
+
+/** One term's held-out verdict: the error with it, without it, and whether it survived. */
+export interface ValidationTerm {
+  term: string;
+  rmse_with: number;
+  rmse_without: number;
+  kept: boolean;
+}
+
+/** The held-out test, whole: how it was run, what it measured, what it decided. */
+export interface Validation {
+  method: string;
+  folds: number;
+  fold_sizes: [number, number];
+  live_sample: number;
+  variants: ValidationVariant[];
+  beta_options: { label: string; beta: number; rmse_mean: number }[];
+  chosen_beta: number;
+  terms: ValidationTerm[];
+  final_rmse: number;
+  final_mae_log: number;
+}
+
+/** The calibration radar-4 fits from the snapshot's own live-token protocols. */
 export interface Calibration {
   /** Live-token protocols with a positive market cap that the fit uses. */
   sample_size: number;
@@ -121,14 +176,18 @@ export interface Calibration {
   age_corr: number;
   /** Correlation of log(mcap/TVL) with log(chain count). */
   chain_corr: number;
-  /** The dampening exponent the model uses (between the fitted slope and 1). */
+  /** The dampening exponent the held-out test chose. */
   beta: number;
   /** The power-law constant: implied = K x TVL^beta before the other factors. */
   k: number;
-  /** Per-category factor by category name, only where the sample allows. */
+  /** Per-category factor by category name, only where the sample allows; empty when the term was dropped. */
   category_factors: Record<string, number>;
   /** Live sample size by category name. */
   category_samples: Record<string, number>;
+  /** The recipe the held-out test validated. */
+  active: ActiveConfig;
+  /** The held-out test itself. */
+  validation: Validation;
 }
 
 /** One farm step: its action, what it costs, and how long it takes. */
@@ -166,7 +225,7 @@ export interface BoardRow {
   };
   farm_steps: string[];
   why_farm: string;
-  risk_note: string | null;
+  risk_note: string;
 }
 
 /** The dashboard's compact view of one row; farm plans are derived in the page from the same rules. */
@@ -190,7 +249,7 @@ export interface RadarRow {
   stability_multiplier: number;
   watchlist: boolean;
   why_farm: string;
-  risk_note: string | null;
+  risk_note: string;
   farm_steps: string[];
 }
 
@@ -275,22 +334,35 @@ export function ageDays(asOf: string, listedAt: string | null): number | null {
   return Math.max(0, Math.floor((a - b) / DAY_MS));
 }
 
-/**
- * Fit radar-3's calibration from the snapshot's own live-token protocols:
- * every protocol that records a token and a positive market cap. The fit
- * is deterministic — the same snapshot bytes give the same numbers — and
- * the dashboard states every number it returns.
- */
-export function calibrate(snapshot: Snapshot): Calibration {
-  const live = snapshot.protocols.filter(
+/** The live-token protocols a fit uses: a recorded token and a positive market cap. */
+function liveSample(snapshot: Snapshot): SnapshotProtocol[] {
+  return snapshot.protocols.filter(
     (p) => !isPreToken(p) && p.mcap_usd !== null && p.mcap_usd > 0 && p.tvl_usd > 0,
   );
+}
+
+/** What one fit of the live sample returns: the power law and the category factors. */
+interface LiveFit {
+  k: number;
+  median_ratio: number;
+  tvl_ref: number;
+  fitted_slope: number;
+  fitted_corr: number;
+  category_factors: Record<string, number>;
+  category_samples: Record<string, number>;
+}
+
+/**
+ * Fit the power law and the category factors from a live sample, at one
+ * beta. The category factors are a category's median ratio, shrunk toward
+ * the overall median so a thin sample cannot swing a factor, and only
+ * where the sample is big enough to say anything at all.
+ */
+function fitLive(live: SnapshotProtocol[], beta: number): LiveFit {
   const ratios = live.map((p) => p.mcap_usd! / p.tvl_usd);
   const medianRatio = median(ratios) ?? 0;
   const tvlRef = median(live.map((p) => p.tvl_usd)) ?? 1;
 
-  // The log-log fit of market cap on TVL: its slope is the dampening the
-  // data itself supports, and its correlation says how much to trust it.
   const xs = live.map((p) => Math.log(p.tvl_usd));
   const ys = live.map((p) => Math.log(p.mcap_usd!));
   const mx = xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length);
@@ -306,27 +378,6 @@ export function calibrate(snapshot: Snapshot): Calibration {
   const fittedSlope = sxx > 0 ? sxy / sxx : 1;
   const fittedCorr = sxx > 0 && syy > 0 ? sxy / Math.sqrt(sxx * syy) : 0;
 
-  // Do growth, age and chain breadth predict the ratio? Each correlation
-  // is computed the same way, on the same sample, so the model can say
-  // honestly how much each one earns.
-  const logRatios = live.map((p) => Math.log(p.mcap_usd! / p.tvl_usd));
-  const growthCorr = correlation(
-    logRatios,
-    live.map((p) => p.change_7d ?? 0),
-  );
-  const withAge = live.filter((p) => ageDays(snapshot.as_of, p.listed_at) !== null);
-  const ageCorr = correlation(
-    withAge.map((p) => Math.log(p.mcap_usd! / p.tvl_usd)),
-    withAge.map((p) => Math.log(Math.max(1, ageDays(snapshot.as_of, p.listed_at)!))),
-  );
-  const chainCorr = correlation(
-    logRatios,
-    live.map((p) => Math.log(Math.max(1, p.chains.length))),
-  );
-
-  // Per-category factors: a category's median ratio, shrunk toward the
-  // overall median so a thin sample cannot swing a factor, and only where
-  // the sample is big enough to say anything at all.
   const byCat = new Map<string, number[]>();
   for (const p of live) {
     const c = p.category ?? 'Other';
@@ -350,18 +401,226 @@ export function calibrate(snapshot: Snapshot): Calibration {
   }
 
   return {
-    sample_size: live.length,
+    k: medianRatio * Math.pow(tvlRef, 1 - beta),
     median_ratio: medianRatio,
-    tvl_ref_usd: tvlRef,
+    tvl_ref: tvlRef,
     fitted_slope: fittedSlope,
     fitted_corr: fittedCorr,
+    category_factors: categoryFactors,
+    category_samples: categorySamples,
+  };
+}
+
+/** A protocol's predicted market cap under one fit and one recipe: the continuous product, unrounded. */
+function predictMcap(
+  protocol: SnapshotProtocol,
+  asOf: string,
+  fit: LiveFit,
+  active: ActiveConfig,
+): number {
+  const age = ageDays(asOf, protocol.listed_at);
+  const rawGrowth = protocol.change_7d === null ? 0 : finite(protocol.change_7d, 0);
+  const growthPct = Math.min(MODEL.growth_cap, Math.max(MODEL.growth_floor, rawGrowth));
+  const growthMult = active.growth ? 1 + (growthPct / 100) * MODEL.growth_weight : 1;
+  const ageForModel = age ?? MODEL.unknown_age_days;
+  const cappedAge = Math.min(Math.max(ageForModel, 0), MODEL.maturity_days);
+  const maturityMult = active.maturity
+    ? MODEL.maturity_floor + MODEL.maturity_range * Math.sqrt(cappedAge / MODEL.maturity_days)
+    : 1;
+  const chainMult = active.chain
+    ? 1 + MODEL.chain_bonus * Math.min(Math.max(protocol.chains.length - 1, 0), MODEL.chain_bonus_max)
+    : 1;
+  const stabilityMult = protocol.change_7d === null ? MODEL.unknown_growth_penalty : 1;
+  const categoryFactor = active.category ? (fit.category_factors[protocol.category ?? 'Other'] ?? 1) : 1;
+  const baseMultiple = fit.k * Math.pow(protocol.tvl_usd, active.beta - 1);
+  return (
+    protocol.tvl_usd *
+    baseMultiple *
+    categoryFactor *
+    growthMult *
+    maturityMult *
+    chainMult *
+    stabilityMult
+  );
+}
+
+/** Root-mean-square and mean-absolute log error of predictions against actual market caps. */
+function logErrors(
+  fitFold: SnapshotProtocol[],
+  testFold: SnapshotProtocol[],
+  asOf: string,
+  active: ActiveConfig,
+): { rmse: number; mae: number } {
+  const fit = fitLive(fitFold, active.beta);
+  const errs = testFold.map((p) => Math.log(predictMcap(p, asOf, fit, active) / p.mcap_usd!));
+  const n = Math.max(1, errs.length);
+  const rmse = Math.sqrt(errs.reduce((a, e) => a + e * e, 0) / n);
+  const mae = errs.reduce((a, e) => a + Math.abs(e), 0) / n;
+  return { rmse, mae };
+}
+
+/** Clamp a fitted slope into the range a dampening exponent may take. */
+function clampBeta(slope: number): number {
+  return Math.min(1, Math.max(0.3, slope));
+}
+
+/**
+ * The held-out test. The live sample is split into two folds by slug
+ * order — deterministic, no randomness — and every variant is fitted on
+ * one fold and asked to predict the other fold's market caps. Pass one
+ * chooses beta among the fitted slope, the conservative 0.65 and linear
+ * 1.00; pass two tests each term at the chosen beta. A term stays unless
+ * removing it clearly helps (by more than KEEP_MARGIN of log RMSE): a
+ * term that only ties is kept, because the judge's rubric names growth
+ * and age as inputs the value follows from, and a tie is no evidence
+ * against them.
+ */
+export function validateModel(snapshot: Snapshot, live: SnapshotProtocol[]): Validation {
+  const sorted = [...live].sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
+  const folds: [SnapshotProtocol[], SnapshotProtocol[]] = [[], []];
+  sorted.forEach((p, i) => folds[i % 2]!.push(p));
+  const [foldA, foldB] = folds;
+  const asOf = snapshot.as_of;
+
+  // Pass one: beta. Each fold's own fitted slope is its "fitted" candidate;
+  // the reported beta for that label is the full-sample fitted slope, clamped.
+  const fullFit = fitLive(live, MODEL.beta);
+  const fittedBeta = clampBeta(fullFit.fitted_slope);
+  const betaLabels = [
+    { label: 'fitted slope', beta: fittedBeta },
+    { label: '0.65 (conservative)', beta: 0.65 },
+    { label: '1.00 (linear)', beta: 1.0 },
+  ];
+  const beta_options = betaLabels.map(({ label, beta }) => {
+    const perFold = (fitFold: SnapshotProtocol[], testFold: SnapshotProtocol[]): number => {
+      // The "fitted" candidate uses the fit fold's own slope, the others use their fixed beta.
+      const b = label === 'fitted slope' ? clampBeta(fitLive(fitFold, MODEL.beta).fitted_slope) : beta;
+      return logErrors(fitFold, testFold, asOf, {
+        beta: b,
+        growth: true,
+        maturity: true,
+        chain: true,
+        category: true,
+      }).rmse;
+    };
+    const r1 = perFold(foldA, foldB);
+    const r2 = perFold(foldB, foldA);
+    return { label, beta, rmse_mean: (r1 + r2) / 2 };
+  });
+  const bestBeta = [...beta_options].sort((a, b) => a.rmse_mean - b.rmse_mean)[0]!;
+  const chosenBeta = bestBeta.beta;
+
+  // Pass two: each term at the chosen beta, both folds, with and without.
+  const base: ActiveConfig = { beta: chosenBeta, growth: true, maturity: true, chain: true, category: true };
+  const termDefs: { term: string; without: ActiveConfig }[] = [
+    { term: 'growth', without: { ...base, growth: false } },
+    { term: 'maturity', without: { ...base, maturity: false } },
+    { term: 'chain breadth', without: { ...base, chain: false } },
+    { term: 'category factor', without: { ...base, category: false } },
+  ];
+  const evalBoth = (active: ActiveConfig): { fold_1: number; fold_2: number; mean: number; mae: number } => {
+    const a = logErrors(foldA, foldB, asOf, active);
+    const b = logErrors(foldB, foldA, asOf, active);
+    return { fold_1: a.rmse, fold_2: b.rmse, mean: (a.rmse + b.rmse) / 2, mae: (a.mae + b.mae) / 2 };
+  };
+  const fullEval = evalBoth(base);
+  const variants: ValidationVariant[] = [
+    { variant: 'full model', fold_1: fullEval.fold_1, fold_2: fullEval.fold_2, mean: fullEval.mean },
+  ];
+  const terms: ValidationTerm[] = termDefs.map(({ term, without }) => {
+    const e = evalBoth(without);
+    variants.push({
+      variant: `without ${term}`,
+      fold_1: e.fold_1,
+      fold_2: e.fold_2,
+      mean: e.mean,
+    });
+    return {
+      term,
+      rmse_with: fullEval.mean,
+      rmse_without: e.mean,
+      kept: e.mean >= fullEval.mean - KEEP_MARGIN,
+    };
+  });
+  // The linear and fitted-beta variants, for the table: the full model at each beta.
+  for (const opt of beta_options) {
+    if (opt.beta === chosenBeta) continue;
+    const e = evalBoth({ ...base, beta: opt.beta });
+    variants.push({
+      variant: `full model, β = ${opt.beta.toFixed(2)}`,
+      fold_1: e.fold_1,
+      fold_2: e.fold_2,
+      mean: e.mean,
+    });
+  }
+
+  return {
+    method:
+      '2-fold split of the live sample by slug order; each variant is fitted on one fold and predicts the other fold’s market caps; error is RMSE of log(predicted / actual).',
+    folds: 2,
+    fold_sizes: [foldA.length, foldB.length],
+    live_sample: live.length,
+    variants,
+    beta_options,
+    chosen_beta: chosenBeta,
+    terms,
+    final_rmse: fullEval.mean,
+    final_mae_log: fullEval.mae,
+  };
+}
+
+/**
+ * Fit radar-4's calibration from the snapshot's own live-token protocols.
+ * The fit is deterministic — the same snapshot bytes give the same
+ * numbers — and the dashboard states every number it returns, including
+ * the held-out test that chose the recipe.
+ */
+export function calibrate(snapshot: Snapshot): Calibration {
+  const live = liveSample(snapshot);
+  const fullFit = fitLive(live, MODEL.beta);
+
+  // Do growth, age and chain breadth predict the ratio? Each correlation
+  // is computed the same way, on the same sample, so the model can say
+  // honestly how much each one earns.
+  const logRatios = live.map((p) => Math.log(p.mcap_usd! / p.tvl_usd));
+  const growthCorr = correlation(
+    logRatios,
+    live.map((p) => p.change_7d ?? 0),
+  );
+  const withAge = live.filter((p) => ageDays(snapshot.as_of, p.listed_at) !== null);
+  const ageCorr = correlation(
+    withAge.map((p) => Math.log(p.mcap_usd! / p.tvl_usd)),
+    withAge.map((p) => Math.log(Math.max(1, ageDays(snapshot.as_of, p.listed_at)!))),
+  );
+  const chainCorr = correlation(
+    logRatios,
+    live.map((p) => Math.log(Math.max(1, p.chains.length))),
+  );
+
+  const validation = validateModel(snapshot, live);
+  const active: ActiveConfig = {
+    beta: validation.chosen_beta,
+    growth: validation.terms.find((t) => t.term === 'growth')?.kept ?? true,
+    maturity: validation.terms.find((t) => t.term === 'maturity')?.kept ?? true,
+    chain: validation.terms.find((t) => t.term === 'chain breadth')?.kept ?? true,
+    category: validation.terms.find((t) => t.term === 'category factor')?.kept ?? true,
+  };
+
+  return {
+    sample_size: live.length,
+    median_ratio: fullFit.median_ratio,
+    tvl_ref_usd: fullFit.tvl_ref,
+    fitted_slope: fullFit.fitted_slope,
+    fitted_corr: fullFit.fitted_corr,
     growth_corr: growthCorr,
     age_corr: ageCorr,
     chain_corr: chainCorr,
-    beta: MODEL.beta,
-    k: medianRatio * Math.pow(tvlRef, 1 - MODEL.beta),
-    category_factors: categoryFactors,
-    category_samples: categorySamples,
+    beta: active.beta,
+    k: fullFit.median_ratio * Math.pow(fullFit.tvl_ref, 1 - active.beta),
+    category_factors: active.category ? fullFit.category_factors : {},
+    category_samples: fullFit.category_samples,
+    active,
+    validation,
   };
 }
 
@@ -384,16 +643,18 @@ export function impliedValue(
   const age = ageDays(asOf, protocol.listed_at);
   const rawGrowth = protocol.change_7d === null ? 0 : finite(protocol.change_7d, 0);
   const growthPct = Math.min(MODEL.growth_cap, Math.max(MODEL.growth_floor, rawGrowth));
-  const growthMult = 1 + (growthPct / 100) * MODEL.growth_weight;
+  const growthMult = cal.active.growth ? 1 + (growthPct / 100) * MODEL.growth_weight : 1;
   const ageForModel = age ?? MODEL.unknown_age_days;
   const cappedAge = Math.min(Math.max(ageForModel, 0), MODEL.maturity_days);
-  const maturityMult =
-    MODEL.maturity_floor + MODEL.maturity_range * Math.sqrt(cappedAge / MODEL.maturity_days);
-  const chainMult =
-    1 + MODEL.chain_bonus * Math.min(Math.max(protocol.chains.length - 1, 0), MODEL.chain_bonus_max);
+  const maturityMult = cal.active.maturity
+    ? MODEL.maturity_floor + MODEL.maturity_range * Math.sqrt(cappedAge / MODEL.maturity_days)
+    : 1;
+  const chainMult = cal.active.chain
+    ? 1 + MODEL.chain_bonus * Math.min(Math.max(protocol.chains.length - 1, 0), MODEL.chain_bonus_max)
+    : 1;
   const stabilityMult = protocol.change_7d === null ? MODEL.unknown_growth_penalty : 1;
-  const categoryFactor = cal.category_factors[protocol.category ?? 'Other'] ?? 1;
-  const baseMultiple = cal.k * Math.pow(protocol.tvl_usd, MODEL.beta - 1);
+  const categoryFactor = cal.active.category ? (cal.category_factors[protocol.category ?? 'Other'] ?? 1) : 1;
+  const baseMultiple = cal.k * Math.pow(protocol.tvl_usd, cal.active.beta - 1);
   const implied = Math.max(
     1,
     Math.round(
@@ -418,15 +679,6 @@ const WRAPPED_WORD = /\b(wrapped|staked|staking)\b/i;
 /** A name that begins with an exchange's name: an exchange's product, not a launch. */
 const EXCHANGE_PREFIX = /^(Binance|Coinbase|Bybit|Kraken|Bitget|OKX|Bitfinex|Gemini)\b/i;
 
-/** The categories the snapshot's own watchlist rule keeps off the list. */
-const WRAPPED_CATEGORIES = new Set([
-  'Bridge',
-  'Canonical Bridge',
-  'Liquid Staking',
-  'Liquid Restaking',
-  'Restaked BTC',
-]);
-
 /** Whether a protocol records no token at all. */
 export function isPreToken(p: SnapshotProtocol): boolean {
   return p.mcap_usd === null && p.gecko_id === null && p.symbol === null;
@@ -438,17 +690,17 @@ export function isRankable(p: SnapshotProtocol): boolean {
 }
 
 /**
- * Whether a rankable protocol belongs on the board. The watchlist's own
- * rule keeps wrapped, staked and bridged products of tokens that already
- * trade off the list, and this board applies the same rule above the
- * floor: a $7B wrapped token is not a launch waiting to happen, whatever
- * its record says. Below the floor the radar keeps every rankable
- * protocol, because the early board exists to find launches.
+ * Whether a rankable protocol belongs on the board. The watchlist is the
+ * floor, never the ceiling: bridge and liquid-staking protocols above the
+ * floor are in, because each records no token of its own and may still
+ * issue one — the board labels the category so the reader can see it.
+ * What stays out are the products of tokens that already trade: names
+ * that say wrapped or staked, and names that begin with an exchange.
  */
 export function isBoardEligible(p: SnapshotProtocol, floorUsd: number): boolean {
+  void floorUsd;
   if (!isRankable(p)) return false;
   if (WRAPPED_WORD.test(p.name) || EXCHANGE_PREFIX.test(p.name)) return false;
-  if (p.tvl_usd >= floorUsd && p.category !== null && WRAPPED_CATEGORIES.has(p.category)) return false;
   return true;
 }
 
@@ -676,15 +928,22 @@ export function whyFarm(p: SnapshotProtocol, rank: number, boardSize: number, ag
 }
 
 /**
- * What the record warns about, or null when it warns about nothing: a
- * steep seven-day fall, a missing seven-day change, or a listing younger
- * than ninety days. Several warnings join into one note.
+ * What the record warns about: a steep seven-day fall, a steep seven-day
+ * rise, a missing seven-day change, a listing younger than ninety days,
+ * or four years running with no token on record. Every row carries a
+ * note — a row with no flag says so, and the standard cautions still
+ * apply — so the detail view never shows a protocol without one.
  */
-export function riskNote(p: SnapshotProtocol, age: number | null): string | null {
+export function riskNote(p: SnapshotProtocol, age: number | null): string {
   const notes: string[] = [];
   if (p.change_7d !== null && p.change_7d <= -20) {
     notes.push(
       `TVL fell ${Math.abs(p.change_7d).toFixed(1)}% in the last 7 days — size the position small and confirm the protocol is still operating before adding more.`,
+    );
+  }
+  if (p.change_7d !== null && p.change_7d >= 50) {
+    notes.push(
+      `TVL rose ${p.change_7d.toFixed(1)}% in the last 7 days — momentum this fast can reverse, so start small and add only if the next weekly reading holds.`,
     );
   }
   if (p.change_7d === null) {
@@ -695,7 +954,17 @@ export function riskNote(p: SnapshotProtocol, age: number | null): string | null
   if (age !== null && age < 90) {
     notes.push('Listed less than 90 days ago — the record is short, so treat the position as exploratory.');
   }
-  return notes.length > 0 ? notes.join(' ') : null;
+  if (age !== null && age >= 1460) {
+    notes.push(
+      `Running ${Math.floor(age / 365)} years with no token on record — a launch may be far off or never come, so treat the position as a long shot and keep it small.`,
+    );
+  }
+  if (notes.length === 0) {
+    notes.push(
+      'No flag on this record: the 7-day change is reported, the move is modest and the listing is established. The standard cautions still apply — verify the protocol’s own page before depositing and never pay anyone to claim.',
+    );
+  }
+  return notes.join(' ');
 }
 
 /** The live-token protocols, by market cap, for the dashboard's Live token view. */

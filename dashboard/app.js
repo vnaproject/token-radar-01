@@ -1,4 +1,4 @@
-// Token Radar "radar-3" dashboard. Reads window.RADAR (written beside
+// Token Radar "radar-4" dashboard. Reads window.RADAR (written beside
 // dashboard/ by main.ts) and renders the ranked board, filters, sorting and
 // a per-protocol detail view with the model's full breakdown, farm plan,
 // why-farm line and risk note. No network: every byte shown is in data.js.
@@ -65,8 +65,9 @@
     var tops = DATA.top_categories.map(function (c) { return c.category + ' ' + c.count; }).join(', ');
     return '<section class="hero"><h1>Pre-token protocols, ranked by implied value</h1>' +
       '<p>The board ranks every pre-token protocol in the snapshot by an implied value ' +
-      'fitted from the <b>live-token protocols in the same snapshot</b> — not from an asserted multiple. ' +
-      'Each protocol is scored by TVL, 7-day change, age and chain breadth; the live-token set is kept apart as a control.</p>' +
+      'fitted from the <b>live-token protocols in the same snapshot</b> — not from an asserted multiple — ' +
+      'and every term of the model is <b>tested held-out</b> before it is used: fitted on one half of the live ' +
+      'sample, asked to predict the other half. Each protocol is scored by TVL, 7-day change, age and chain breadth; the live-token set is kept apart as a control.</p>' +
       '<div class="stats">' +
       '<div class="stat"><b>' + DATA.watchlist_size + '/' + DATA.watchlist_size + '</b><span>Watchlist covered</span></div>' +
       '<div class="stat"><b>' + DATA.board_size + '</b><span>Board rows</span></div>' +
@@ -179,35 +180,92 @@
       ['Live protocols fitted', String(cal.sample_size), 'with a recorded market cap above zero'],
       ['Median mcap / TVL', cal.median_ratio.toFixed(3), 'median of the 128 live protocols; the anchor for the base multiple'],
       ['TVL anchor', fmtUsd(cal.tvl_ref_usd), 'median TVL of the live sample'],
-      ['Fitted log-log slope', cal.fitted_slope.toFixed(2) + ' (r = ' + cal.fitted_corr.toFixed(2) + ')', 'log(mcap) on log(TVL); the model uses a conservative β = ' + cal.beta.toFixed(2) + ''],
+      ['Fitted log-log slope', cal.fitted_slope.toFixed(2) + ' (r = ' + cal.fitted_corr.toFixed(2) + ')', 'log(mcap) on log(TVL); the held-out test chose β = ' + cal.beta.toFixed(2) + ''],
+      ['Chosen β (held-out)', cal.beta.toFixed(2), 'picked among the fitted slope, 0.65 and linear 1.00 by held-out error'],
+      ['Held-out log RMSE', cal.validation.final_rmse.toFixed(3) + ' (MAE ' + cal.validation.final_mae_log.toFixed(3) + ')', 'the full model predicting market caps it was not fitted on, mean of 2 folds'],
       ['Growth vs ratio', cal.growth_corr.toFixed(2), 'correlation of log(mcap/TVL) with 7-day change — weak, so growth enters with a small weight'],
       ['Age vs ratio', cal.age_corr.toFixed(2), 'correlation of log(mcap/TVL) with log(age) — near zero'],
       ['Chains vs ratio', cal.chain_corr.toFixed(2), 'correlation of log(mcap/TVL) with chain count — near zero'],
     ];
+    var dropped = ['growth', 'maturity', 'chain breadth', 'category factor'].filter(function (t) {
+      if (t === 'growth') return !cal.active.growth;
+      if (t === 'maturity') return !cal.active.maturity;
+      if (t === 'chain breadth') return !cal.active.chain;
+      return !cal.active.category;
+    });
+    var formulaParts = ['TVL × <b>K × TVL<sup>β−1</sup></b>'];
+    if (cal.active.category) formulaParts.push('category');
+    if (cal.active.growth) formulaParts.push('(1 + clamp(7d, −30, +100) / 100 × 0.35)');
+    if (cal.active.maturity) formulaParts.push('(0.75 + 0.25 × √(min(age, 730) / 730))');
+    if (cal.active.chain) formulaParts.push('(1 + 0.02 × min(chains − 1, 4))');
+    formulaParts.push('stability');
+    var formula = 'implied = ' + formulaParts.join(' × ') + '<br>' +
+      'K = ' + cal.k.toFixed(1) + ' · β = ' + cal.beta.toFixed(2) + ' · fitted at the live median TVL ' + fmtUsd(cal.tvl_ref_usd) +
+      (dropped.length ? '<br>Dropped by the held-out test (each counts as × 1): ' + dropped.join(', ') + '.' : '<br>No term was dropped: every term survived the held-out test.');
     var factorRows = Object.keys(cal.category_factors).sort().map(function (c) {
       return '<tr><td>' + esc(c) + '</td><td class="num">' + cal.category_factors[c].toFixed(2) + '</td><td class="num">' + cal.category_samples[c] + '</td></tr>';
     }).join('');
-    return '<section class="panel model" aria-labelledby="modelTitle"><h2 id="modelTitle">How the ranking works — model radar-3</h2>' +
-      '<p class="note">Implied value = TVL × base multiple × category factor × growth × maturity × chains × stability. ' +
+    return '<section class="panel model" aria-labelledby="modelTitle"><h2 id="modelTitle">How the ranking works — model ' + esc(DATA.model_version) + '</h2>' +
+      '<p class="note">Implied value = TVL × base multiple × category factor × growth × maturity × chains × stability — ' +
+      'with each term kept only if the held-out test says it earns its place. ' +
       'The base multiple is not asserted: it is fitted from the live-token protocols in this same snapshot, ' +
-      'so a protocol twice as big is not worth twice as much (β = ' + cal.beta.toFixed(2) + ', below the fitted slope ' + cal.fitted_slope.toFixed(2) + '). ' +
+      'so a protocol twice as big is not worth twice as much (β = ' + cal.beta.toFixed(2) + ', chosen held-out, below the fitted slope ' + cal.fitted_slope.toFixed(2) + '). ' +
       'Growth is clamped to −30%…+100% and enters with weight 0.35 because it barely predicts the live ratio; ' +
       'maturity rises from 0.75 to 1.00 over 730 days; each extra chain adds 2% up to 8%. ' +
       'Protocols that record no 7-day change are discounted 5% for the missing signal.</p>' +
-      '<div class="formula">implied = TVL × <b>K × TVL<sup>β−1</sup></b> × category × (1 + clamp(7d, −30, +100) / 100 × 0.35) × (0.75 + 0.25 × √(min(age, 730) / 730)) × (1 + 0.02 × min(chains − 1, 4)) × stability<br>' +
-      'K = ' + cal.k.toFixed(1) + ' · β = ' + cal.beta.toFixed(2) + ' · fitted at the live median TVL ' + fmtUsd(cal.tvl_ref_usd) + '</div>' +
+      '<div class="formula">' + formula + '</div>' +
       '<table class="calib"><thead><tr><th>Calibration</th><th style="text-align:right">Value</th><th>Why it matters</th></tr></thead><tbody>' +
       rows.map(function (r) { return '<tr><td>' + r[0] + '</td><td class="num">' + r[1] + '</td><td>' + r[2] + '</td></tr>'; }).join('') +
       '</tbody></table>' +
-      '<table class="calib"><thead><tr><th>Category factor</th><th style="text-align:right">Factor</th><th style="text-align:right">Live n</th></tr></thead><tbody>' +
-      factorRows +
-      '</tbody></table>' +
-      '<p class="note">Category factors are shrunken toward 1.00 (k = 8) and applied only where at least 5 live protocols exist in the category; ' +
-      'every other category uses 1.00. The board covers all 40 watchlist slugs and every rankable pre-token protocol: ' +
-      'wrapped, staked and exchange-branded products, and above the $50M floor the bridge and liquid-staking categories, are set aside ' +
-      'because a $7B wrapped token is not a launch waiting to happen. Below the floor every rankable protocol stays, so the early board finds launches. ' +
+      validationSection(cal) +
+      (Object.keys(cal.category_factors).length ?
+        '<table class="calib"><thead><tr><th>Category factor</th><th style="text-align:right">Factor</th><th style="text-align:right">Live n</th></tr></thead><tbody>' +
+        factorRows +
+        '</tbody></table>' +
+        '<p class="note">Category factors are shrunken toward 1.00 (k = 8) and applied only where at least 5 live protocols exist in the category; ' +
+        'every other category uses 1.00.</p>' :
+        '<p class="note">No category factor is applied: the held-out test dropped the category term, so every category uses 1.00. ' +
+        'The fitted factors are still listed in the validation table as the variant that lost.</p>') +
+      '<p class="note">The board covers all 40 watchlist slugs and every rankable pre-token protocol: ' +
+      'bridge and liquid-staking protocols above the $50M floor are in, because each records no token of its own and may still issue one, ' +
+      'and the board labels the category so the reader can see it. What stays out are versioned pools, exchange products, and names that say ' +
+      'wrapped or staked, because those are products of tokens that already trade, not launches waiting to happen. ' +
+      'Below the floor every rankable protocol stays, so the early board finds launches. ' +
       'A protocol is described as recording no token — never as having none.</p>' +
       '</section>';
+  }
+
+  function validationSection(cal) {
+    var v = cal.validation;
+    if (!v) return '';
+    var variantRows = v.variants.map(function (x) {
+      return '<tr><td>' + esc(x.variant) + '</td><td class="num">' + x.fold_1.toFixed(3) + '</td><td class="num">' + x.fold_2.toFixed(3) + '</td><td class="num">' + x.mean.toFixed(3) + '</td></tr>';
+    }).join('');
+    var betaRows = v.beta_options.map(function (o) {
+      return '<tr><td>' + esc(o.label) + '</td><td class="num">' + o.beta.toFixed(2) + '</td><td class="num">' + o.rmse_mean.toFixed(3) + '</td><td>' + (o.beta === v.chosen_beta ? 'chosen' : '') + '</td></tr>';
+    }).join('');
+    var termRows = v.terms.map(function (t) {
+      var delta = t.rmse_without - t.rmse_with;
+      return '<tr><td>' + esc(t.term) + '</td><td class="num">' + t.rmse_with.toFixed(3) + '</td><td class="num">' + t.rmse_without.toFixed(3) + '</td><td>' +
+        (t.kept ? 'kept' : 'dropped') + ' (' + (delta >= 0 ? '+' : '') + delta.toFixed(3) + ')</td></tr>';
+    }).join('');
+    return '<h3>Held-out validation — every term tested before it is used</h3>' +
+      '<p class="note">' + esc(v.method) + ' The live sample is ' + v.live_sample + ' protocols, split into folds of ' +
+      v.fold_sizes[0] + ' and ' + v.fold_sizes[1] + ' by slug order. The validation tests the recipe, not the final fit: ' +
+      'the final fit uses all ' + v.live_sample + ' live protocols, because the board is scored once and there is no second snapshot to spend. ' +
+      'A term stays unless removing it clearly helps (by more than 0.001 of log RMSE); a term that only ties is kept.</p>' +
+      '<table class="calib"><thead><tr><th>Variant</th><th style="text-align:right">Fold 1 RMSE</th><th style="text-align:right">Fold 2 RMSE</th><th style="text-align:right">Mean RMSE</th></tr></thead><tbody>' +
+      variantRows +
+      '</tbody></table>' +
+      '<table class="calib"><thead><tr><th>β option</th><th style="text-align:right">β</th><th style="text-align:right">Mean RMSE</th><th></th></tr></thead><tbody>' +
+      betaRows +
+      '</tbody></table>' +
+      '<table class="calib"><thead><tr><th>Term</th><th style="text-align:right">RMSE with</th><th style="text-align:right">RMSE without</th><th>Verdict</th></tr></thead><tbody>' +
+      termRows +
+      '</tbody></table>' +
+      '<p class="note">Final held-out error of the chosen recipe: log RMSE ' + v.final_rmse.toFixed(3) +
+      ', mean absolute log error ' + v.final_mae_log.toFixed(3) + ' — a typical prediction is off by a factor of about e<sup>' +
+      v.final_mae_log.toFixed(2) + '</sup>. That spread is the honest limit of fitting market caps from TVL alone, and it is why the board ranks by implied value rather than pretending to price anything.</p>';
   }
 
   function detailDialog(row) {
@@ -232,7 +290,7 @@
     var check = recomputed === row.implied_value_usd ? 'matches the board' : 'differs by ' + fmtUsd(Math.abs(recomputed - row.implied_value_usd));
     var steps = row.farm_steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('');
     return head +
-      '<section class="detail-section"><h3>Implied value — model radar-3</h3>' +
+      '<section class="detail-section"><h3>Implied value — model ' + esc(DATA.model_version) + '</h3>' +
       '<div class="equation">' +
       '<div><span>TVL</span><b>' + fmtUsd(row.tvl_usd) + '</b></div>' +
       '<div><span>Base multiple at this TVL</span><b>' + row.base_multiple.toFixed(4) + '×</b></div>' +
