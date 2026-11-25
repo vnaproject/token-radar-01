@@ -227,9 +227,8 @@
         '<p class="note">No category factor is applied: the held-out test dropped the category term, so every category uses 1.00. ' +
         'The fitted factors are still listed in the validation table as the variant that lost.</p>') +
       '<p class="note">The board covers all 40 watchlist slugs and every rankable pre-token protocol: ' +
-      'bridge and liquid-staking protocols above the $50M floor are in, because each records no token of its own and may still issue one, ' +
-      'and the board labels the category so the reader can see it. What stays out are versioned pools, exchange products, and names that say ' +
-      'wrapped or staked, because those are products of tokens that already trade, not launches waiting to happen. ' +
+      'wrapped, staked and exchange-branded products, and above the $50M floor the bridge and liquid-staking categories, ' +
+      'are set aside because a $7B wrapped token is not a launch waiting to happen. ' +
       'Below the floor every rankable protocol stays, so the early board finds launches. ' +
       'A protocol is described as recording no token — never as having none.</p>' +
       '</section>';

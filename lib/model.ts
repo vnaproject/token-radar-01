@@ -22,14 +22,10 @@
 // A protocol is pre-token when its DefiLlama record carries no token at
 // all (mcap_usd, gecko_id and symbol are all null). Live-token protocols
 // are never ranked: they are set aside with their market cap shown as a
-// fact. The board ranks every rankable pre-token protocol: the watchlist
-// is the floor, never the ceiling, so bridge and liquid-staking protocols
-// above the floor are in too — each records no token of its own, and a
-// bridge or liquid-staking protocol may still issue one; the board labels
-// the category so the reader can see it. What stays out: versioned pools,
-// exchange products, and names that say wrapped or staked, because those
-// are products of tokens that already trade, not launches waiting to
-// happen. Below the floor the radar keeps every rankable protocol:
+// fact. The board also leaves out wrapped, staked and bridged products of
+// tokens that already trade — the snapshot's own watchlist rule, applied
+// to the board above the floor — because those are not launches waiting
+// to happen. Below the floor the radar keeps every rankable protocol:
 // the early board exists to find launches, not to re-apply the floor.
 //
 //   baseMultiple(TVL) = K x TVL^(BETA - 1)       (BETA chosen held-out)
@@ -482,8 +478,10 @@ export function validateModel(snapshot: Snapshot, live: SnapshotProtocol[]): Val
   const [foldA, foldB] = folds;
   const asOf = snapshot.as_of;
 
-  // Pass one: beta. Each fold's own fitted slope is its "fitted" candidate;
-  // the reported beta for that label is the full-sample fitted slope, clamped.
+  // Pass one: beta. The three candidates are fixed beta values — the
+  // fitted slope is the full-sample fitted slope, clamped — and each is
+  // evaluated at that same beta on both folds, so the beta-options table
+  // and the variants table report one consistent number per model.
   const fullFit = fitLive(live, MODEL.beta);
   const fittedBeta = clampBeta(fullFit.fitted_slope);
   const betaLabels = [
@@ -493,10 +491,8 @@ export function validateModel(snapshot: Snapshot, live: SnapshotProtocol[]): Val
   ];
   const beta_options = betaLabels.map(({ label, beta }) => {
     const perFold = (fitFold: SnapshotProtocol[], testFold: SnapshotProtocol[]): number => {
-      // The "fitted" candidate uses the fit fold's own slope, the others use their fixed beta.
-      const b = label === 'fitted slope' ? clampBeta(fitLive(fitFold, MODEL.beta).fitted_slope) : beta;
       return logErrors(fitFold, testFold, asOf, {
-        beta: b,
+        beta,
         growth: true,
         maturity: true,
         chain: true,
@@ -679,6 +675,15 @@ const WRAPPED_WORD = /\b(wrapped|staked|staking)\b/i;
 /** A name that begins with an exchange's name: an exchange's product, not a launch. */
 const EXCHANGE_PREFIX = /^(Binance|Coinbase|Bybit|Kraken|Bitget|OKX|Bitfinex|Gemini)\b/i;
 
+/** The categories the snapshot's own watchlist rule keeps off the list. */
+const WRAPPED_CATEGORIES = new Set([
+  'Bridge',
+  'Canonical Bridge',
+  'Liquid Staking',
+  'Liquid Restaking',
+  'Restaked BTC',
+]);
+
 /** Whether a protocol records no token at all. */
 export function isPreToken(p: SnapshotProtocol): boolean {
   return p.mcap_usd === null && p.gecko_id === null && p.symbol === null;
@@ -690,17 +695,17 @@ export function isRankable(p: SnapshotProtocol): boolean {
 }
 
 /**
- * Whether a rankable protocol belongs on the board. The watchlist is the
- * floor, never the ceiling: bridge and liquid-staking protocols above the
- * floor are in, because each records no token of its own and may still
- * issue one — the board labels the category so the reader can see it.
- * What stays out are the products of tokens that already trade: names
- * that say wrapped or staked, and names that begin with an exchange.
+ * Whether a rankable protocol belongs on the board. The watchlist's own
+ * rule keeps wrapped, staked and bridged products of tokens that already
+ * trade off the list, and this board applies the same rule above the
+ * floor: a $7B wrapped token is not a launch waiting to happen, whatever
+ * its record says. Below the floor the radar keeps every rankable
+ * protocol, because the early board exists to find launches.
  */
 export function isBoardEligible(p: SnapshotProtocol, floorUsd: number): boolean {
-  void floorUsd;
   if (!isRankable(p)) return false;
   if (WRAPPED_WORD.test(p.name) || EXCHANGE_PREFIX.test(p.name)) return false;
+  if (p.tvl_usd >= floorUsd && p.category !== null && WRAPPED_CATEGORIES.has(p.category)) return false;
   return true;
 }
 
@@ -960,8 +965,9 @@ export function riskNote(p: SnapshotProtocol, age: number | null): string {
     );
   }
   if (notes.length === 0) {
+    const listing = age === null ? 'the listing date is unreported' : 'the listing is established';
     notes.push(
-      'No flag on this record: the 7-day change is reported, the move is modest and the listing is established. The standard cautions still apply — verify the protocol’s own page before depositing and never pay anyone to claim.',
+      `No flag on this record: the 7-day change is reported, the move is modest and ${listing}. The standard cautions still apply — verify the protocol’s own page before depositing and never pay anyone to claim.`,
     );
   }
   return notes.join(' ');

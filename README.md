@@ -99,13 +99,12 @@ Rankable means pre-token, not a CEX, and not a versioned pool name
 The board ranks all 40 watchlist slugs unconditionally, plus every
 board-eligible pre-token protocol. Board-eligible excludes wrapped,
 staked and exchange-branded products — a $7B wrapped token is not a
-launch waiting to happen — but it does not exclude bridge and
-liquid-staking protocols above the $50M floor: each records no token of
-its own and may still issue one, and the board labels the category so the
-reader can see it. Below the floor every rankable protocol stays, so the
+launch waiting to happen — and above the $50M floor it also excludes
+the bridge, liquid-staking and restaking categories, the snapshot's own
+watchlist rule. Below the floor every rankable protocol stays, so the
 early board finds launches. That gives every rankable protocol a row:
-289 in the snapshot, minus the wrapped, staked, exchange and versioned
-names the rule keeps out. The run prints the exact count.
+289 in the snapshot, minus the wrapped, staked, bridged, exchange and
+versioned names the rule keeps out. The run prints the exact count.
 
 ## Farm plans
 
